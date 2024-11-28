@@ -1,0 +1,868 @@
+---
+title: "TU256 Probability and Statistical Inference"
+author: "Panagiotis Pnevmatikatos"
+subtitle: PSI CA Part II
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+  pdf_document:
+    toc: true
+    toc_depth: '4'
+  word_document:
+    toc: true
+    toc_depth: '4'
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include="FALSE"}
+#Setting include to FALSE on this chunk so that it doesn't appear in the output
+install_packages <- function(pkg) { 
+  
+  # Install package if it is not already
+  if (!(pkg %in% installed.packages()[, "Package"])){ 
+    
+    install.packages(pkg, repos='http://cran.us.r-project.org')
+  }
+  
+  library(pkg, character.only = TRUE)
+  
+} # end installPackages()
+
+#Create the list of packages we need
+pkg_list = c("tidyverse", "pastecs", "FSA", "semTools", "VIM", "car", "gtsummary", "gt", "vcd")
+#Call our function passing it the list of packages
+lapply(pkg_list, install_packages)
+
+#We set the working directory to be the same as the location of the script
+#setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+#We just echo that back to the screen to check that it is set correctly
+getwd()
+#We are using a .sav file created from the SPSS file survey.sav  taken from SPSS Survival Manual 6th Edition Julie Pallant (http://spss.allenandunwin.com.s3-website-ap-southeast-2.amazonaws.com/data-files.html#.Wb0vvnWP-po). 
+#This has been saved to a .dat format - more easily readable in R.
+
+
+
+#Load data set
+imdb <- read_csv("imdb_top_2000_movies.csv")
+
+
+#Sanitize column names, derive columns
+colnames(imdb) <- tolower(gsub(" ", "_", colnames(imdb)))
+
+
+#derive column release_decade from column release year
+imdb$release_year<-gsub("[^0-9.]", "", imdb$release_year)
+imdb$release_year<-substr(imdb$release_year, 1, 4)
+imdb$release_decade<- paste0(substr(imdb$release_year, 1, 3), "0")
+imdb$release_year<-as.integer(imdb$release_year)
+
+#derive columns genre_* from column genre
+genres <- unique(trimws(unlist(strsplit(tolower(imdb$genre), ","))))
+
+for (genre in genres) {
+  genre_col_name <- paste0("genre_", tolower(genre))
+  imdb[[genre_col_name]]<- grepl(genre, imdb$genre, ignore.case = TRUE)  
+}
+
+
+# convert column gross from char to integer
+imdb$gross<- gsub("\\$|[mM]", "", imdb$gross)
+imdb$gross<- as.integer(as.numeric(imdb$gross) * 1e6)
+
+
+
+```
+
+# 1. Introduction
+
+<p>This statistical analysis was designed to investigate whether a range of film's attributes like votes crowd sourced from the imdb website, reviews written from authorized film critics, the release decade of the film, the genre etc, impact on a imdb rating. The dataset used in this analysis contains data collected from 2000 records listed on imdb. The dataset was download from kaggle in the form of csv file from <https://www.kaggle.com/datasets/prishasawhney/imdb-dataset-top-2000-movies/data>. (It is also contained in the zip file, next to the present report).\
+</p>
+
+### 1.1 The Research Question
+
+<p>The research question investigated in this research is: How do film's attributes like votes crowd sourced from the imdb website, reviews written from authorized film critics, the release decade of the film, the genre etc, impact on a imdb rating? The dataset contain a variety of attributes and it was well formatted. However, some minor data cleansing had to happen and sanitize the release year, convert the abbreviated value gross value to integer (eg \$5.54M to 5,540,000), sanitize the column name, and create derived columns (see table 3)</p>
+
+### 1.2 The Variables
+
+**Table 1: measurements included in the dataset**
+
+<p>
+
+| Concept | Measurement Instrument Used | Variable Type |
+|---------------------|---------------------------------|------------------|
+| imdb rating | Aggregated user ratings for the film in the imdb site | Continuous |
+| votes | Number of votes received by the movie | Discrete |
+| metascore | Metascore of the movie; a weighted average of the reviews from a large group of respected critics | Continuous |
+| release year | The Year of Release | Discrete |
+| gross | Gross value of the movie | Discrete |
+| duration | The running time of the movie (in minutes) | Discrete |
+
+</p>
+
+The dataset also contains categorical film attributes. Details of the variables and potential values are included in Table 2 below.
+
+**Table 2: measurements included in the dataset**
+
+| Concept  | Description/Possible Values                      | Variable Type |
+|---------------------|---------------------------------|------------------|
+| genre    | the genre of the film, variety of values         | Nominal       |
+| director | the director of the film, variety of values      | Nominal       |
+| cast     | the leading actor of the film, variety of values | Nominal       |
+
+On top of the dataset's existing columns, we have created dynamically derived columns like a set of boolean columns expressing whether a film belongs to a genre category or not and a release_decade column
+
+**Table 3: derived columns and variables**
+
+| Concept | Description/Possible Values | Variable Type |
+|---------------------|---------------------------------|------------------|
+| genre_comedy | whether the film is a comedy or not/TRUE, FALSE | Binary Nominal |
+| release_decade | 1920, 1930, ..., 2010 | Nominal with multiple categories |
+
+### 1.3 Hypotheses
+
+<p>
+
+This research question was investigated through a series of hypotheses tests. The following hypotheses were investigated:
+
+**Table 4: Hypotheses investigated**
+
+| Pair | Null Hypothesis (H0) | Alternative Hypothesis (Ha) |
+|-------------------|---------------------------|--------------------------|
+| 1 | There is no relationship between a film’s metascore and their imdb rating. | There is a relationship between a film’s metascore and their imdb rating. |
+| 2 | There is no relationship between a film’s votes and their imdb rating. | There is a relationship between a film’s votes and their imdb rating. |
+| 3 | There is no difference between the imdb rating for films which are comedies and films which are not | There is difference in the imdb rating for films which are comedies and films which are not |
+| 4 | There are no differences between the imdb rating for films with different directors. | There are differences between the imdb rating for films with different directors. |
+| 5 | There is no relationship between a film's genre (comedy/non comedy) and the decade it was released| There is a relationship between a film's genre (comedy/non comedy) and the decade it was released |
+
+</p>
+
+The data for each of the variables of interest was inspected to establish whether the level of missing data represented a source of bias. Using the guidance of Tabachnick and Fidell (2016 neither the proportion nor pattern of missing data represent a source of concern see Figure 1.
+
+```{r, include=FALSE, echo=FALSE}
+# inspect missing data
+varsint<-c("metascore", "gross", "release_year","duration", "imdb_rating","votes" )
+sdatasubset<-imdb[varsint]#create a subset of data with just the variables of interest
+```
+
+```{r missing, fig.cap="<b>Figure 1: Inspection of Missing Data</b>", include=TRUE, echo=FALSE}
+summary(VIM::aggr(sdatasubset, sortVar=TRUE, combined=FALSE, only.miss=T, numbers=TRUE, cex.axis = 0.8))
+```
+
+# 2. Hypotheses
+
+## 2.1 Relationship between metascore and imdb rating
+
+H0: There is no relationship between a film’s metascore and their imdb rating.\
+Ha: There is a relationship between a film’s metascore and their imdb rating.\
+
+### 2.1.2 Inspection of metascore
+
+```{r hist-metascore, include=FALSE, warning=FALSE}
+#Create a histogram
+gg_metascore <- ggplot(imdb, aes(x=metascore)) 
+#Change the label of the x axis
+gg_metascore <- gg_metascore + labs(x="metascore")
+#manage binwidth and colours
+gg_metascore <- gg_metascore + geom_histogram(binwidth=2, colour="black", aes(y=..density.., fill=..count..))
+gg_metascore <- gg_metascore + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C")
+#A a density curve using a normal denisty function
+#Use stat_function to compute a normalised score for each value of metascore
+#Pass the mean and standard deviation to this as parameters
+#use the na.rm parameter to say how missing values are handled
+gg_metascore <- gg_metascore + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$metascore, na.rm=TRUE), sd=sd(imdb$metascore, na.rm=TRUE)))
+#to display the graph request the contents of the variable be shown
+
+descr_metascore <- pastecs::stat.desc(imdb$metascore, basic=F)
+
+```
+
+```{r assess-metascore, include=FALSE, warning=FALSE}
+#Generate summary statistics
+#stat.desc is a function from pastecs - make sure you include the basic switch=F to ensure you don't get scienfitic notation
+
+
+#We can make our decision based on the value of the standardised score for skew and kurtosis
+#We divide the skew statistic by the standard error to get the standardised score
+#This will indicate if we have a problem
+metascore_skew<-semTools::skew(imdb$metascore)
+metascore_kurt<-semTools::kurtosis(imdb$metascore)
+metascore_skew[1]/metascore_skew[2]
+metascore_kurt[1]/metascore_kurt[2]
+
+
+#And also by calculating the percentage of standardised scores for the variable itself that are outside our acceptable range
+#This will tell us how big a problem we have
+# Calculate the percentage of standardised scores that are greated than 1.96
+# the perc function which is part of the FSA package which calculate the percentage that are within a range - you can look for greater than "gt", greater than or equal "geq", "gt", less than or equal "leq",  or less than "lt"),
+# scale is a function that creates z scores, abs gets absolute value
+
+zmetascore<- abs(scale(imdb$metascore))
+
+FSA::perc(as.numeric(zmetascore), 1.96, "gt")
+FSA::perc(as.numeric(zmetascore), 3.29, "gt")
+# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
+```
+
+<p style="text-align:justify">
+
+Metascore scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 2 and Figure 3) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r round(metascore_kurt[1]/metascore_kurt[2],2)`) nor the standardized score for skewness (`r round(metascore_skew[1]/metascore_skew[2],2)`) can be considered acceptable using the criteria proposed by Curran, West and Finch (1996). However as over 99% of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2013), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$metascore, na.rm=TRUE),2)`, sd=`r round(sd(imdb$metascore, na.rm=TRUE),2)`, n=`r length(imdb$metascore)-sum(is.na(imdb$metascore))`).
+
+</p>
+
+<b>Descriptive statistics of metascore</b>
+
+```{r  echo=FALSE, warning=FALSE}
+print(descr_metascore)
+```
+
+<b>Visualizations of metascore</b>
+
+```{r fig.cap="<b>Figure 2: Histogram for metascore</b>", echo=FALSE, warning=FALSE}
+print(gg_metascore)
+```
+
+```{r, fig.cap="<b>Figure 3: QQPlot for metascore</b>", echo=FALSE, warning=FALSE}
+qqnorm(imdb$metascore) 
+
+qplot=qqline(imdb$metascore, col=2) #show a line on the plot
+```
+
+### 2.1.2 Inspection of imdb rating
+
+```{r hist-imdb-rating, include=FALSE}
+#Create histogram
+gs_rating <- ggplot(imdb, aes(x=imdb_rating)) + labs(x="imdb rating") + geom_histogram(binwidth=.2, colour="black", aes(y=..density.., fill=..count..)) + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C") + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$imdb_rating, na.rm=TRUE), sd=sd(imdb$imdb_rating, na.rm=TRUE)))
+
+```
+
+```{r stats-imdb-rating, include=FALSE}
+#Generate regular summary statistics - lots of packages offer mechanisms to do this
+descr_rating <- pastecs::stat.desc(imdb$imdb_rating, basic=F)
+
+#Generate standardized scores for skewness and kurtosis
+rating_skew<-semTools::skew(imdb$imdb_rating)
+rating_kurt<-semTools::kurtosis(imdb$imdb_rating)
+rating_skew[1]/rating_skew[2]
+rating_kurt[1]/rating_kurt[2]
+
+#Calculate the percentage of standardized scores outside acceptable limits
+zrating<- abs(scale(imdb$imdb_rating))
+
+FSA::perc(as.numeric(zrating), 1.96, "gt")
+FSA::perc(as.numeric(zrating), 3.29, "gt")
+# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
+
+```
+
+<p style="text-align:justify">
+
+Imdb rating scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 4 and Figure 5) identified some issues with skewness and kurtosis. While the standardized score for kurtosis (`r round(rating_kurt[1]/rating_kurt[2],2)`) could be considered acceptable using the criteria proposed by Curran, West and Finch (1996), but the standardized score for skewness (`r round(rating_skew[1]/rating_skew[2],2)`) was outside the acceptable range. However as over 99% of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(imdb$imdb_rating, na.rm=TRUE),2)`, n=`r length(imdb$imdb_rating)-sum(is.na(imdb$imdb_rating))`).
+
+</p>
+
+<b>Descriptive statistics of imdb rating</b>
+
+```{r  echo=FALSE, warning=FALSE}
+print(descr_rating)
+```
+
+<b>Visualizations of imdb rating</b>
+
+```{r fig.cap="<b>Figure 4: Histogram for imdb rating</b>", echo=FALSE, warning=FALSE}
+print(gs_rating)
+
+```
+
+```{r, fig.cap="<b>Figure 5: QQPlot for imdb rating</b>", echo=FALSE, warning=FALSE}
+qqnorm(imdb$imdb_rating, main = "QQPlot for imdb rating")
+qqline(imdb$imdb_rating)  # Adds a reference line to the QQ plot
+```
+
+### 2.1.3 Inspection film's metascore and rating covariance
+
+```{r corr-metascore-imdb_rating, include=FALSE, warning=FALSE, echo=FALSE}
+
+#Create a Simple scatterplot of metascore and imdb rating with a regression line
+
+scatter <- ggplot(imdb, aes(metascore, imdb_rating)) + geom_point(alpha = .5) + geom_smooth(method = "lm", colour = "Red", se = F, formula = y ~ x) + labs(x = "metascore", y = "imdb rating") 
+
+```
+
+```{r, fig.cap="<b>Figure 6: Scatterplot for metascore and imdb rating</b>", echo=FALSE, warning=FALSE}
+scatter
+
+```
+
+### 2.1.4 Pearson’s correlation test on metascore and rating
+
+As both metascore and imdb rating data can be considered approximately normal a Pearson’s correlation test can be used to test this hypothesis
+
+```{r, include=TRUE, warning=FALSE}
+#Pearson Correlation - this is the correct test for this data
+corstat_metascore_rating<-stats::cor.test(imdb$metascore, imdb$imdb_rating, method='pearson')
+corstat_metascore_rating   
+```
+
+<p style="text-align:justify">
+
+The relationship between metascore and imdb rating was investigated using a Pearson correlation. A strong positive correlation was found (r =`r round(as.numeric(corstat_metascore_rating[4]),2)`, n=`r as.numeric(corstat_metascore_rating[2])`, p\<.001).
+
+</p>
+
+## 2.2 Relationship between film's votes and imdb rating
+
+H0: There is no relationship between a film’s votes and their imdb rating.\
+Ha: There is a relationship between a film’s votes and their imdb rating.\
+
+### 2.2.1 Inspection of film's votes
+
+```{r hist-votes, include=FALSE}
+#Create histogram
+gs_votes <- ggplot(imdb, aes(x=votes)) + labs(x="votes") + geom_histogram(binwidth=150000, colour="black", aes(y=..density.., fill=..count..)) + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C") + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$votes, na.rm=TRUE), sd=sd(imdb$votes, na.rm=TRUE)))
+
+box_votes <- boxplot(imdb$votes, outline = F)
+
+descr_votes <- pastecs::stat.desc(imdb$votes, basic=F)
+```
+
+```{r stats-votes, include=FALSE}
+#Generate standardized scores for skewness and kurtosis
+votes_skew<-semTools::skew(imdb$votes)
+votes_kurt<-semTools::kurtosis(imdb$votes)
+votes_skew[1]/votes_skew[2]
+votes_kurt[1]/votes_kurt[2]
+
+#Calculate the percentage of standardized scores outside acceptable limits
+zvotes<- abs(scale(imdb$votes))
+
+perc196<-FSA::perc(as.numeric(zvotes), 1.96, "gt")
+# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
+
+```
+
+<p style="text-align:justify">
+
+Film votes scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 7 and Figure 8) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r round(votes_kurt[1]/votes_kurt[2],2)`) nor for skewness (`r round(votes_skew[1]/votes_skew[2],2)`) could be considered within the acceptable range using the criteria proposed by Curran, West and Finch (1996). However, as over 95% of standardized scores fall within the bounds of +/- 1.96 (as perc over 1.96 `r perc196`% is above), using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$votes, na.rm=TRUE),2)`, sd=`r round(sd(imdb$votes, na.rm=TRUE),2)`, n=`r length(imdb$votes)-sum(is.na(imdb$votes))`).
+
+</p>
+
+<b>Descriptive statistics of imdb rating</b>
+
+```{r  echo=FALSE, warning=FALSE}
+print(descr_rating)
+```
+
+<b>Visualizations of votes</b>
+
+```{r fig.cap="<b>Figure 7: Histogram for votes</b>", echo=FALSE, warning=FALSE}
+print(gs_votes)
+
+```
+
+```{r, fig.cap="<b>Figure 8: QQPlot for votes</b>", echo=FALSE, warning=FALSE}
+qqnorm(imdb$votes, main = "QQPlot for votes")
+qqline(imdb$votes)  # Adds a reference line to the QQ plot
+```
+
+### 2.2.2 Inspection film's imdb rating
+
+The variable imdb rating has been assessed in 2.1.2
+
+### 2.2.3 Inspection film's votes and imdb rating covariance
+
+```{r corr-votes-imdb_rating, include=FALSE, warning=FALSE, echo=FALSE}
+
+#Create a Simple scatterplot of votes and imdb rating with a regression line
+
+scatter_votes_rating <- ggplot(imdb, aes(votes, imdb_rating)) + geom_point(alpha = .2) + geom_smooth(method = "lm", colour = "Red", se = F, formula = y ~ x) + labs(x = "votes", y = "imdb rating") 
+
+```
+
+```{r, fig.cap="<b>Figure 9: Scatterplot for votes and imdb rating</b>", echo=FALSE, warning=FALSE}
+print(scatter_votes_rating)
+
+```
+
+### 2.2.4 Pearson’s correlation test on votes and rating
+
+As both film votes and imdb rating data can be considered approximately normal a Pearson’s correlation test can be used to test this hypothesis
+
+```{r, include=FALSE, warning=FALSE, echo=FALSE}
+#Pearson Correlation - this is the correct test for this data
+corstat_votes_rating<-stats::cor.test(imdb$votes, imdb$imdb_rating, method='pearson')
+
+```
+
+<p style="text-align:justify">
+
+The relationship between film's votes and imdb rating was investigated using a Pearson correlation. A moderate positive correlation was found (r =`r round(as.numeric(corstat_votes_rating[4]),2)`, n=`r as.numeric(corstat_votes_rating[2])`, p\<.001).
+
+</p>
+
+```{r, echo=FALSE}
+corstat_votes_rating
+```
+
+## 2.3 Difference in imdb ratings for films which are comedies and films which are not
+
+H0: There is no difference between the imdb rating for films which are comedies and films which are not.\
+Ha: There is a difference between the imdb rating for films which are comedies and films which are not.\
+
+### 2.3.1 Inspection of film's comedy status
+
+No missing data were found in film genre and as result in genre_comedy (which derives from the column genre).\
+From our film data set, 709 films are comedies while 1291 are not comedies (see Figure 10).
+
+```{r, include=FALSE, echo=FALSE}
+
+# Create a table of proportions for the nominal variable 'comedy'
+genre_proportion_table <- table(imdb$genre_comedy) / nrow(imdb)
+
+# Create a table of counts for the nominal variable 'comedy'
+count_data <- as.data.frame(table(imdb$genre_comedy))
+colnames(count_data) <- c("comedy_status", "Count")
+
+pie_genre_comdey <- ggplot(count_data, aes(x = "", y = Count, fill = comedy_status)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y") +
+  geom_text(aes(label = Count), position = position_stack(vjust = 0.5), size = 5) +  # Add count labels in the middle of the slices
+  theme_void() +
+  theme(legend.title = element_blank(), legend.text = element_text())
+
+```
+
+```{r fig.cap="<b>Figure 10: Proportions of Comedy films</b>" , echo=FALSE}
+print(pie_genre_comdey)
+```
+
+### 2.3.2 Inspection of film's imdb ratings by genre group
+
+#### 2.3.2.1 Inspection of film's imdb ratings variable as a whole
+
+The variable imdb rating has been assessed in 2.1.2 and has been found to approximate normal distribution
+
+#### 2.3.2.2 Inspection of film's imdb ratings by genre group
+
+```{r , include=FALSE, echo=FALSE}
+gg_rating_by_genre <- ggplot(imdb, aes(x=imdb_rating, color=genre_comedy, fill=genre_comedy)) +   labs(x="imdb rating") + 
+  # Histogram with alpha for transparency
+  geom_histogram(aes(y = ..density..), position="identity", alpha=0.5, binwidth=.5, color="black") +
+  # Density plot with transparency for overlapping curves
+  geom_density(alpha=0.4) +
+  # Customize the color and fill scales
+  scale_color_manual(values=c("blue", "red"), labels=c("Not a comedy", "comedy")) +
+  scale_fill_manual(values=c("lightblue", "lightcoral"), labels=c("Not a comedy", "comedy"))
+
+gg_box_rating_by_genre <- ggplot(imdb, aes(x=genre_comedy, y=imdb_rating, color=genre_comedy)) + 
+  geom_boxplot(alpha=0.4, outlier.colour="red", outlier.size=3) + 
+  geom_jitter(alpha=0.6, width=0.2, size=1) + 
+  labs(x="Comedy", y="Rating") + 
+  scale_color_manual(values = c("blue", "red")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate labels for better readability
+
+descr_ratings_by_group<-psych::describeBy(imdb$imdb_rating, imdb$genre_comedy, mat=TRUE)
+
+#Generate standardized scores for skewness and kurtosis for comedy and non comedy ratings
+#
+comedies<- filter(imdb, genre_comedy==TRUE)
+
+comedy_skew<-semTools::skew(comedies$imdb_rating)
+comedy_kurt<-semTools::kurtosis(comedies$imdb_rating)
+comedy_skew[1]/comedy_skew[2]
+comedy_kurt[1]/comedy_kurt[2]
+
+non_comedies<- filter(imdb, genre_comedy==FALSE)
+
+non_comedy_skew<-semTools::skew(non_comedies$imdb_rating)
+non_comedy_kurt<-semTools::kurtosis(non_comedies$imdb_rating)
+non_comedy_skew[1]/non_comedy_skew[2]
+non_comedy_kurt[1]/non_comedy_kurt[2]
+
+zcomedy_rating<- abs(scale(comedies$imdb_rating))
+
+comedy_perc196<-FSA::perc(as.numeric(zcomedy_rating), 1.96, "gt")
+
+znon_comedy_rating<- abs(scale(non_comedies$imdb_rating))
+
+non_comedy_perc196<-FSA::perc(as.numeric(znon_comedy_rating), 1.96, "gt")
+
+```
+
+<p style="text-align:justify">
+
+The two groups (comedy/non comedy) of imdb ratings were assessed for normality. Visual inspection of the histogram identified some issues with skewness and kurtosis. However, as over 95% of standardized scores fall within the bounds of +/- 1.96 (as percentages over were calculated `r comedy_perc196`% and `r non_comedy_perc196`%). Therefore, using the guidance of Field, Miles and Field (2012), both groups can be considered to approximate the normal distribution with the comedy group distribution attributes as (m=`r round(mean(comedies$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(comedies$imdb_rating)-sum(is.na(comedies$imdb_rating))`) and the non comedy group ones as (m=`r round(mean(non_comedies$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(non_comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(non_comedies$imdb_rating)-sum(is.na(non_comedies$imdb_rating))`).
+
+</p>
+
+<b>Descriptive statistics of the imdb ratings by group</b>
+
+```{r, include=TRUE, echo=FALSE}
+print (descr_ratings_by_group)
+```
+
+<b>Visualisations of imdb rating by group</b>\
+Both film groups plotted along with their density function in the same Histogram. Also Box plot of both groups (see Figure 11, 12)
+
+```{r fig.cap="<b>Figure 11: Histogram and Density Plot of imdb rating by comedy Status</b>", include=TRUE, echo=FALSE}
+print (gg_rating_by_genre)
+```
+
+```{r fig.cap="<b>Figure 12: Box Plots of imdb rating by comedy Status</b>", include=TRUE, echo=FALSE}
+print (gg_box_rating_by_genre)
+
+```
+
+### 2.3.3 Test for homogeneity of variance of film's imdb ratings by genre group
+
+```{r , include=FALSE, echo=FALSE}
+#Conduct Levene's test for homogeneity of variance in library car - the null hypothesis is that variances in groups are equal so to assume homogeneity we would expect probability to not be statistically significant.
+levene_descr<-car::leveneTest(imdb_rating ~ genre_comedy, data=imdb)
+levene_rating_by_genre_pvalue<-levene_descr$`Pr(>F)`[1]
+
+#Pr(>F) is your probability - in this case it is not statistically significant so we can assume homogeneity
+
+```
+
+<p style="text-align:justify">
+
+Furthermore, the Levene test for homogeneity of variance resulted a p-value=`r levene_rating_by_genre_pvalue` therefore the variances can be considered equal.
+
+</p>
+
+<b>Levene test</b>
+
+```{r, include=TRUE, echo=FALSE}
+print (levene_descr)
+```
+
+### 2.3.4 Two Sample t-test to compare ratings for films which are comedies and films which are not
+
+```{r , include=FALSE, echo=FALSE}
+#Conduct the t-test from package stats
+#In this case we can use the var.equal = TRUE option to specify equal variances and a pooled variance estimate
+t_test_rating_genre<-stats::t.test(imdb_rating~genre_comedy,var.equal=TRUE,data=imdb)
+```
+
+<b>TWO Sample t-test</b>
+
+```{r, include=TRUE, echo=FALSE}
+print (t_test_rating_genre)
+```
+
+### 2.3.5 Conclusion on comparison of ratings for films which are comedies and films which are not
+
+```{r, include=FALSE, echo=FALSE}
+effcd=round(effectsize::t_to_d(t = t_test_rating_genre$statistic, t_test_rating_genre$parameter), 3)
+```
+
+<b>Cohen's d effect size</b>
+
+```{r, include=TRUE, echo=FALSE}
+print (effcd)
+```
+
+<p style="text-align:justify">
+
+An independent-samples t-test was conducted to compare imdb rating for films which are comedies and those which aren't. An statistically extremely significant difference in the rating was found (M=`r round(mean(comedies$imdb_rating, na.rm=TRUE),2)`, SD=`r round(sd(comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(comedies$imdb_rating)-sum(is.na(comedies$imdb_rating))` for the group of comedy films, M=`r round(mean(non_comedies$imdb_rating, na.rm=TRUE),2)`, SD=`r round(sd(non_comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(non_comedies$imdb_rating)-sum(is.na(non_comedies$imdb_rating))` for non-comedy films), (t(`r t_test_rating_genre$parameter`)=`r t_test_rating_genre$statistic`, p\< 0.05). Cohen's d indicated a moderate effect size (`r round(effcd$d, 3)`).
+
+</p>
+
+## 2.4 Difference in imdb rating for films released in different decades
+
+H0: There are no differences between the imdb rating for films with different release decades.\
+Ha: There are differences between the imdb rating for films with different release decades.\
+
+### 2.4.1 Inspection of film's release decade
+
+No missing data was found for decades. The proportions of films ratings for each decade are shown in Figure 12.
+
+```{r, include=FALSE, echo=FALSE}
+
+# Assuming you have your data in a data frame called survey
+
+# Create a table of proportions for the nominal variable 'release_decade'
+decades_proportion_table <- table(imdb$release_decade) / nrow(imdb)
+print(decades_proportion_table)
+
+# Create a table of counts for the nominal variable 'child'
+count_data <- as.data.frame(table(imdb$release_decade))
+colnames(count_data) <- c("decades", "Count")
+
+
+# Create the pie chart showing numbers
+pie_decades <- ggplot(count_data, aes(x = "", y = Count, fill = decades)) + 
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = Count), position = position_stack(vjust = 0.5)) +
+  theme_void() +
+  theme(legend.title = element_blank(), 
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid  = element_blank()) + labs(fill = "decades")
+
+descr_ratings_by_decade<-psych::describeBy(imdb$imdb_rating, imdb$release_decade, mat=TRUE)
+```
+
+```{r fig.cap="<b>Figure 12: Proportions of film ratings for each decade</b>" , echo=FALSE}
+print(pie_decades)
+```
+
+### 2.4.2 Inspection of film's imdb rating by decade
+
+#### 2.4.2.1 Inspection of film's imdb ratings variable as a whole
+
+The variable imdb rating has been assessed in 2.1.2
+
+#### 2.4.2.2 Inspection of film's imdb ratings variable by decade
+
+<b>Descriptive statistics of the imdb ratings by decade</b>
+
+```{r, include=TRUE, echo=FALSE, max.print=150}
+print(descr_ratings_by_decade[c("group1", "n", "mean", "sd", "median", "mad", "min", "max", "range", "skew","kurtosis",  "se")], width=200)
+```
+
+```{r, include=FALSE, echo=FALSE}
+# Box plot with jittered points to show distribution and outliers
+box_rating_by_decade <- ggplot(imdb, aes(x=release_decade, y=imdb_rating, color=release_decade)) + 
+  geom_boxplot(alpha=0.4, outlier.colour="red", outlier.size=3) + 
+  geom_jitter(alpha=0.6, width=0.2, size=1) + 
+  labs(x="decade", y="Imdb rating") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate labels for better readability
+
+box_rating_by_decade
+
+```
+
+```{r, include=T, echo=FALSE}
+
+print(box_rating_by_decade)
+
+```
+
+### 2.4.3 Bartlett test for homogeneity of variance
+
+```{r, include=FALSE, echo=FALSE}
+
+descr_bartlett<-stats::bartlett.test(imdb_rating~release_decade, data=imdb)
+
+```
+
+```{r, include=TRUE, echo=FALSE}
+print(descr_bartlett)
+```
+
+### 2.4.4 Anova omnibus test
+
+```{r, include=FALSE, echo=FALSE}
+#Conduct ANOVA using the one-way ANOVA from the stats package with VAR.equal to be true because we have homogeneity of variance
+anova_rating_by_decade <- stats::oneway.test(imdb_rating ~ as.factor(release_decade), data = imdb, var.equal = TRUE)
+
+```
+
+```{r, include=TRUE, echo=FALSE}
+print(anova_rating_by_decade)
+```
+
+```{r, include=TRUE, echo=FALSE}
+#No statistically significant difference was found so we need to examine and report the post-hoc results also.
+#We use Tukey for post-hoc testing as we have homogeneity of variance
+tukey_rating_by_decade<-as.data.frame(rstatix::tukey_hsd(imdb, imdb_rating ~ release_decade))
+
+#Compute our Eta squared
+aneffes=effectsize::effectsize(anova_rating_by_decade)
+#Store the relevant pieces of the output from ANOVA in variables to use for reporting
+#Degrees of freedom
+df1=anova_rating_by_decade$parameter[1]
+df2=anova_rating_by_decade$parameter[2]
+#F statistic
+Fstat=round(anova_rating_by_decade$statistic, 3)
+#Pvalue
+pval=round(anova_rating_by_decade$p.value,2)
+significant_rows <- tukey_rating_by_decade[tukey_rating_by_decade$p.adj.signif != "ns", ]
+
+```
+
+```{r, include=TRUE, echo=FALSE, max.print=100}
+print(tukey_rating_by_decade, width = 150)
+print (aneffes)
+```
+
+### 2.4.5 Conclusion on comparison of film ratings for films released in different decades
+
+<p>
+
+A one-way between-groups analysis of variance (ANOVA) was conducted to explore the impact of film's release decade on film rating. The films are divided into ten groups according to the decade they were released (from 1920s to 2010s). There was a statistically significant difference in imdb ratings for the ten decage groups: (F(`r df1`, `r df2`)= `r Fstat`, p\<0.05. The effect size, calculated using eta squared was (`r round(aneffes$Eta2,2)`). Post-hoc comparisons using the Tukey HSD test indicated statistically significant differences between several groups that can be observed in the table bellow
+
+```{r, include=TRUE, echo=FALSE, max.print=100}
+print(significant_rows[c("group1", "group2")])
+
+```
+
+</p>
+
+## 2.5 Relationship between a film's genre (comendy/non comedy) and decade it was released
+
+H0: There is no relationship between a film’s genre (comedy/non comedy) and the decade it was released.\
+Ha: There is a relationship between a film’s genre (comedy/non comedy) and the decade it was released.\
+
+### 2.5.1 Inspection of release decade
+
+The variable release_decade has been assessed in 2.4.1. The proportion of films in each release decade is shown in Figure 12.
+
+### 2.5.2 Inspection of genre (comedy/non comedy)
+
+The variable genre_comedy has been assessed in 2.3.1. The proportion of films in each genre group (comedy/non-comedy) is shown in Figure 10.
+
+### 2.5.3 Inspection of films genre (comedy/non comedy) by release decade
+
+Table 5 shows the numbers of films in each decade in each genre group (comedy/non-comedy).
+
+```{r, include=FALSE, echo=FALSE}
+
+# Create a summary table using dplyr
+summary_table <- imdb %>%
+  group_by(release_decade) %>%
+  summarise(
+    `Non-Comedy` = sum(genre_comedy == FALSE),
+    `Comedy` = sum(genre_comedy == TRUE),
+    .groups = 'drop'
+  )
+
+# Create a nicely formatted table using gt directly
+gt_table <- summary_table %>%
+  gt() %>%
+  tab_header(title = "Release Decade and Genre (Comedy/Non Comedy) Counts") %>%
+  cols_label(release_decade = "Release decade") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  tab_style(
+    style = list(
+      cell_borders(sides = c("top", "bottom"), color = "black", weight = px(2))
+    ),
+    locations = cells_body(columns = everything())
+  ) %>%
+  tab_options(
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    table.border.bottom.width = px(2),
+    table.border.top.width = px(2),
+    column_labels.border.top.color = "black",
+    column_labels.border.bottom.color = "black",
+    column_labels.border.bottom.width = px(2)
+  )
+
+
+```
+
+**Table 5: Hypotheses investigated**
+
+<p align="left">
+
+```{r, include=TRUE, echo=FALSE}
+# Display the formatted table with borders and no shading
+
+gt_table
+
+```
+
+### 2.5.4 Test the independance and measure the association of film's genre (comedy/non comedy) and the film's release decade
+
+As both release decade and genre comedy are represented by nominal variables, a Chi-squared test of independence can be used to test the hypothesis.
+
+</p>
+
+```{r chitest-cramersv, include=FALSE, echo=FALSE}
+
+#Create  contingency table
+contigency_decade_comedy<-xtabs(~release_decade+genre_comedy, data=imdb)
+#use the chisq.test function in the stats package to do the test, not a 2 x 2 table so set correct=FALSE 
+chi_decade_comedy<-stats::chisq.test(contigency_decade_comedy, correct=FALSE)
+
+cramersv_decade_comedy=sjstats::cramer(contigency_decade_comedy)
+
+```
+
+Pearson's chi-square test
+
+```{r print-chitest, include=TRUE, echo=FALSE}
+
+print(chi_decade_comedy)
+
+```
+
+Expected Frequencies
+
+```{r print-chitest-excpected-frequencies, include=TRUE, echo=FALSE}
+
+print(chi_decade_comedy$expected)
+
+```
+
+Pearson chi-square test's p-value suggests an association between genre and release decade and by observing the adjusted residuals table and our contigency table we can identify the decades 1940, 1950 and 1970 as less likely to releasing comedies
+
+Adjusted residuals
+
+```{r print-adjusted-residuals, include=TRUE, echo=FALSE}
+
+adjusted_residuals <- chi_decade_comedy$stdres
+
+# Print the adjusted residuals
+print(adjusted_residuals)
+
+```
+
+
+However, to measure the association between film's comedy status and film's release decade we can Calculate cramer's V
+
+```{r print-cramersv, include=TRUE, echo=FALSE}
+
+print(cramersv_decade_comedy)
+```
+
+
+
+### 2.5.5 Conclusion on examining the relation between film's genre (comedy/non comedy) and release decade
+
+A Chi-Square test for independence indicated a statistically significant association between film's comedy genre and the film's release decade: χ²(`r chi_decade_comedy$parameter`, n=`r nrow(imdb)`)=`r round(chi_decade_comedy$statistic,3)`, p=`r round(chi_decade_comedy$p.value, 4)`\<0.05.
+
+While the association is statistically significant the small effect size that is resulted by the calculation of Cramer's V= `r round(cramersv_decade_comedy, 2)` suggests the association is relatively weak.
+
+# 3. Conclusions
+
+As a result of the investigations and the tests conducted in section 2, the following the following conclusions have been drawn:
+
+1.  **Pair 1**
+    -   H0: There is no relationship between a film’s metascore and their imdb rating.\
+    -   Ha: There is a relationship between a film’s metascore and their imdb rating.\
+    -   **Conclusion**: A strong, positive, statistically significant correlation was found between a film’s metascore and their imdb rating. There is therefore evidence to reject the null hypothesis in favour of the alternate hypothesis and the result suggests that higher film metascores are associated with higher ratings.
+2.  **Pair 2**
+    -   H0: There is no relationship between a film’s votes and their imdb rating.\
+    -   Ha: There is a relationship between a film’s votes and their imdb rating.\
+    -   **Conclusion**: A moderate, positive, statistically significant correlation was found between a film’s votes and their imdb rating. There is therefore evidence to reject the null hypothesis in favour of the alternate hypothesis and the result suggests that higher film votes are associated with higher ratings.
+3.  **Pair 3**
+    -   H0: There is no difference between the imdb rating for films which are comedies and films which are not.\
+    -   Ha: There is a difference between the imdb rating for films which are comedies and films which are not.\
+    -   **Conclusion**: A statistically extremely significant difference in the film rating was found between comedy films and non-comedy films. There is therefore evidence to support rejecting the null hypothesis in favour of the alternate hypothesis.
+4.  **Pair 4**
+    -   H0: There are no differences between the imdb rating for films with different release decades.
+    -   Ha: There are differences between the imdb rating for films with different release decades.\
+    -   **Conclusion**: A statistically significant difference in film ratings was found for films released in different decades. Therefore there is evidence to support rejecting the null hypothesis in favour of the alternate hypothesis.
+5.  **Pair 5**
+    -   H0: There is no relationship between a film's genre (comedy/non comedy) and the decade it was released.\
+    -   Ha: There is a relationship between a film's genre (comedy/non comedy) and the decade it was released.\
+    -   **Conclusion**: A statistically significant association was found between a film's genre and its release decade. However, the association between film's genre and film's release decade was found to be relatively weak. Therefore while there is evidence to reject the null hypothesis in favour of the alternate hypothesis and the result suggests that comedies tend to be released durring certain decades more often than other genre films.
+
+# References
+
+Cohen, S., Kamarck, T. & Mermelstein, R. (1983). A global measure of perceived stress. Journal of Health and Social Behavior, 24, 385–96.\
+Cohen, J. (1988). Statistical power analysis for the behavioral sciences (2nd ed.). Hillside, NJ: Lawrence Erlbaum Associates.\
+Crowne, D.P. & Marlowe, D. (1960). A new scale of social desirability independent of psychopathology. Journal of Consulting Psychology, 24, 349–54.\
+Curran, Patrick J., Stephen G. West, and John F. Finch. (1996). "The robustness of test statistics to nonnormality and specification error in confirmatory factor analysis." Psychological methods 1.1 (1996): 16.\Diener, E., Emmons, R.A., Larson, R.J. & Griffin, S. (1985). The Satisfaction with Life scale. Journal of Personality Assessment, 49, 71–6.\
+Field, A., Field Z. & Miles J.(2012). Discovering statistics using IBM SPSS statistics. Sage publications limited,\
+Pallant, J. (2000). Development and validation of a scale to measure perceived control of internal states. Journal of Personality Assessment, 75, 2, 308–37. Pearlin, L. & Schooler, C. (1978). The structure of coping. Journal of Health and Social Behavior, 19, 2–21.\
+Rosenberg, M. (1965). Society and the adolescent self-image. Princeton, NJ: Princeton University Press.\
+Scheier, M.F. & Carver, C.S. (1985). Optimism, coping and health: An assessment and implications of generalized outcome expectancies. Health Psychology, 4, 219–47.\
+Watson, D., Clark, L.A. & Tellegen, A. (1988). Development and validation of brief measures of positive and negative affect: The PANAS scales. Journal of Personality and Social Psychology, 54, 1063–70.\
+Tabachnik and Fidell, Using Multivariate Statistics, 6th Edition, Pearson.
