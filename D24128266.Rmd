@@ -40,10 +40,10 @@ lapply(pkg_list, install_packages)
 #setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 #We just echo that back to the screen to check that it is set correctly
 getwd()
-#We are using a .sav file created from the SPSS file survey.sav  taken from SPSS Survival Manual 6th Edition Julie Pallant (http://spss.allenandunwin.com.s3-website-ap-southeast-2.amazonaws.com/data-files.html#.Wb0vvnWP-po). 
-#This has been saved to a .dat format - more easily readable in R.
+```
 
-
+```{r import-data, include="FALSE"}
+# import from csv, sanitize malformated dates, engineer features
 
 #Load data set
 imdb <- read_csv("imdb_top_2000_movies.csv")
@@ -72,9 +72,65 @@ for (genre in genres) {
 imdb$gross<- gsub("\\$|[mM]", "", imdb$gross)
 imdb$gross<- as.integer(as.numeric(imdb$gross) * 1e6)
 
+```
 
+```{r common-functions, include=FALSE, warning=FALSE}
+
+create_histogram <- function(data, xlab, bwidth=2) {
+
+  # Create the histogram using the hist() function
+  #Create a histogram
+  gg_hist <- ggplot(data, aes(x=data[[xlab]])) 
+  #Change the label of the x axis
+  gg_hist <- gg_hist + labs(x=xlab)
+  #manage binwidth and colours
+  gg_hist <- gg_hist + geom_histogram(binwidth=bwidth, colour="black", aes(y=..density.., fill=..count..))
+  gg_hist <- gg_hist + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C")
+  #A a density curve using a normal denisty function
+  #Use stat_function to compute a normalised score for each value
+  #Pass the mean and standard deviation to this as parameters
+  #use the na.rm parameter to say how missing values are handled
+  gg_hist <- gg_hist + stat_function(fun=dnorm, color="red",args=list(mean=mean(data[[xlab]], na.rm=TRUE), sd=sd(data[[xlab]], na.rm=TRUE)))
+  #to display the graph request the contents of the variable be shown
+}
+
+
+
+assess_normality <- function(data){
+#We can make our decision based on the value of the standardised score for skew and kurtosis
+#We divide the skew statistic by the standard error to get the standardised score
+#This will indicate if we have a problem
+#And also by calculating the percentage of standardised scores for the variable itself that are outside our acceptable range
+#This will tell us how big a problem we have
+# Calculate the percentage of standardised scores that are greated than 1.96 and 3.29
+# the perc function which is part of the FSA package which calculate the percentage that are within a range - you can look for greater than "gt", greater than or equal "geq", "gt", less than or equal "leq",  or less than "lt"),
+# scale is a function that creates z scores, abs gets absolute value
+  
+  skew<-semTools::skew(data)
+  kurt<-semTools::kurtosis(data)
+  sskew <- skew[1]/skew[2]
+  skurt <- kurt[1]/kurt[2]
+  zdata<-abs(scale(data))
+  sd<-sd(data, na.rm=TRUE)
+  mean<-mean(data, na.rm=TRUE)
+  n<-length(data)-sum(is.na(data))
+  
+  result<-list(
+    sskew = sskew,
+    skurt = skurt,
+    perc196 = 100- FSA::perc(as.numeric(zdata), 1.96, "gt"),
+    perc329 = 100- FSA::perc(as.numeric(zdata), 3.29, "gt"),
+    pretty.sskew = round(sskew,2),
+    pretty.skurt = round(skurt,2),
+    pretty.sd = round(sd,2),
+    pretty.mean = round(mean,2),
+    n=n
+  )
+  return (result)
+}
 
 ```
+
 
 # 1. Introduction
 
@@ -117,7 +173,7 @@ On top of the dataset's existing columns, we have created dynamically derived co
 **Table 3: derived columns and variables**
 
 | Concept | Description/Possible Values | Variable Type |
-|---------------------|---------------------------------|------------------|
+|----------------|-------------------------------------|--------------------|
 | genre_comedy | whether the film is a comedy or not/TRUE, FALSE | Binary Nominal |
 | release_decade | 1920, 1930, ..., 2010 | Nominal with multiple categories |
 
@@ -130,25 +186,21 @@ This research question was investigated through a series of hypotheses tests. Th
 **Table 4: Hypotheses investigated**
 
 | Pair | Null Hypothesis (H0) | Alternative Hypothesis (Ha) |
-|-------------------|---------------------------|--------------------------|
+|------|--------------------------------|--------------------------------|
 | 1 | There is no relationship between a film’s metascore and their imdb rating. | There is a relationship between a film’s metascore and their imdb rating. |
 | 2 | There is no relationship between a film’s votes and their imdb rating. | There is a relationship between a film’s votes and their imdb rating. |
 | 3 | There is no difference between the imdb rating for films which are comedies and films which are not | There is difference in the imdb rating for films which are comedies and films which are not |
 | 4 | There are no differences between the imdb rating for films with different directors. | There are differences between the imdb rating for films with different directors. |
-| 5 | There is no relationship between a film's genre (comedy/non comedy) and the decade it was released| There is a relationship between a film's genre (comedy/non comedy) and the decade it was released |
+| 5 | There is no relationship between a film's genre (comedy/non comedy) and the decade it was released | There is a relationship between a film's genre (comedy/non comedy) and the decade it was released |
 
 </p>
 
 The data for each of the variables of interest was inspected to establish whether the level of missing data represented a source of bias. Using the guidance of Tabachnick and Fidell (2016 neither the proportion nor pattern of missing data represent a source of concern see Figure 1.
 
-```{r, include=FALSE, echo=FALSE}
-# inspect missing data
-varsint<-c("metascore", "gross", "release_year","duration", "imdb_rating","votes" )
-sdatasubset<-imdb[varsint]#create a subset of data with just the variables of interest
-```
-
 ```{r missing, fig.cap="<b>Figure 1: Inspection of Missing Data</b>", include=TRUE, echo=FALSE}
-summary(VIM::aggr(sdatasubset, sortVar=TRUE, combined=FALSE, only.miss=T, numbers=TRUE, cex.axis = 0.8))
+# inspect missing data
+inspect_subset<-imdb[c("metascore", "gross", "release_year","duration", "imdb_rating","votes" )]
+summary(VIM::aggr(inspect_subset, sortVar=TRUE, combined=FALSE, only.miss=T, numbers=TRUE, cex.axis = 0.8))
 ```
 
 # 2. Hypotheses
@@ -160,55 +212,19 @@ Ha: There is a relationship between a film’s metascore and their imdb rating.\
 
 ### 2.1.2 Inspection of metascore
 
-```{r hist-metascore, include=FALSE, warning=FALSE}
-#Create a histogram
-gg_metascore <- ggplot(imdb, aes(x=metascore)) 
-#Change the label of the x axis
-gg_metascore <- gg_metascore + labs(x="metascore")
-#manage binwidth and colours
-gg_metascore <- gg_metascore + geom_histogram(binwidth=2, colour="black", aes(y=..density.., fill=..count..))
-gg_metascore <- gg_metascore + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C")
-#A a density curve using a normal denisty function
-#Use stat_function to compute a normalised score for each value of metascore
-#Pass the mean and standard deviation to this as parameters
-#use the na.rm parameter to say how missing values are handled
-gg_metascore <- gg_metascore + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$metascore, na.rm=TRUE), sd=sd(imdb$metascore, na.rm=TRUE)))
-#to display the graph request the contents of the variable be shown
-
-descr_metascore <- pastecs::stat.desc(imdb$metascore, basic=F)
-
-```
 
 ```{r assess-metascore, include=FALSE, warning=FALSE}
 #Generate summary statistics
 #stat.desc is a function from pastecs - make sure you include the basic switch=F to ensure you don't get scienfitic notation
+descr_metascore <- pastecs::stat.desc(imdb$metascore, basic=F)
 
+metascore_assessment<-assess_normality(imdb$metascore)
 
-#We can make our decision based on the value of the standardised score for skew and kurtosis
-#We divide the skew statistic by the standard error to get the standardised score
-#This will indicate if we have a problem
-metascore_skew<-semTools::skew(imdb$metascore)
-metascore_kurt<-semTools::kurtosis(imdb$metascore)
-metascore_skew[1]/metascore_skew[2]
-metascore_kurt[1]/metascore_kurt[2]
-
-
-#And also by calculating the percentage of standardised scores for the variable itself that are outside our acceptable range
-#This will tell us how big a problem we have
-# Calculate the percentage of standardised scores that are greated than 1.96
-# the perc function which is part of the FSA package which calculate the percentage that are within a range - you can look for greater than "gt", greater than or equal "geq", "gt", less than or equal "leq",  or less than "lt"),
-# scale is a function that creates z scores, abs gets absolute value
-
-zmetascore<- abs(scale(imdb$metascore))
-
-FSA::perc(as.numeric(zmetascore), 1.96, "gt")
-FSA::perc(as.numeric(zmetascore), 3.29, "gt")
-# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
 ```
 
 <p style="text-align:justify">
 
-Metascore scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 2 and Figure 3) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r round(metascore_kurt[1]/metascore_kurt[2],2)`) nor the standardized score for skewness (`r round(metascore_skew[1]/metascore_skew[2],2)`) can be considered acceptable using the criteria proposed by Curran, West and Finch (1996). However as over 99% of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2013), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$metascore, na.rm=TRUE),2)`, sd=`r round(sd(imdb$metascore, na.rm=TRUE),2)`, n=`r length(imdb$metascore)-sum(is.na(imdb$metascore))`).
+Metascore scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 2 and Figure 3) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r metascore_assessment["pretty.skurt"]`) nor the standardized score for skewness (`r metascore_assessment["pretty.sskew"]`) can be considered acceptable using the criteria proposed by Curran, West and Finch (1996). However as `r metascore_assessment["perc329"]`% (> 99%)  of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2013), the data can be considered to approximate a normal distribution (m=`r metascore_assessment["pretty.mean"]`, sd=`r metascore_assessment["pretty.sd"]`, n=`r metascore_assessment["n"]`).
 
 </p>
 
@@ -221,7 +237,7 @@ print(descr_metascore)
 <b>Visualizations of metascore</b>
 
 ```{r fig.cap="<b>Figure 2: Histogram for metascore</b>", echo=FALSE, warning=FALSE}
-print(gg_metascore)
+print(create_histogram(imdb, "metascore"))
 ```
 
 ```{r, fig.cap="<b>Figure 3: QQPlot for metascore</b>", echo=FALSE, warning=FALSE}
@@ -232,34 +248,17 @@ qplot=qqline(imdb$metascore, col=2) #show a line on the plot
 
 ### 2.1.2 Inspection of imdb rating
 
-```{r hist-imdb-rating, include=FALSE}
-#Create histogram
-gs_rating <- ggplot(imdb, aes(x=imdb_rating)) + labs(x="imdb rating") + geom_histogram(binwidth=.2, colour="black", aes(y=..density.., fill=..count..)) + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C") + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$imdb_rating, na.rm=TRUE), sd=sd(imdb$imdb_rating, na.rm=TRUE)))
-
-```
-
 ```{r stats-imdb-rating, include=FALSE}
 #Generate regular summary statistics - lots of packages offer mechanisms to do this
 descr_rating <- pastecs::stat.desc(imdb$imdb_rating, basic=F)
 
-#Generate standardized scores for skewness and kurtosis
-rating_skew<-semTools::skew(imdb$imdb_rating)
-rating_kurt<-semTools::kurtosis(imdb$imdb_rating)
-rating_skew[1]/rating_skew[2]
-rating_kurt[1]/rating_kurt[2]
-
-#Calculate the percentage of standardized scores outside acceptable limits
-zrating<- abs(scale(imdb$imdb_rating))
-
-FSA::perc(as.numeric(zrating), 1.96, "gt")
-FSA::perc(as.numeric(zrating), 3.29, "gt")
-# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
+assess_rating<-assess_normality(imdb$imdb_rating)
 
 ```
 
 <p style="text-align:justify">
 
-Imdb rating scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 4 and Figure 5) identified some issues with skewness and kurtosis. While the standardized score for kurtosis (`r round(rating_kurt[1]/rating_kurt[2],2)`) could be considered acceptable using the criteria proposed by Curran, West and Finch (1996), but the standardized score for skewness (`r round(rating_skew[1]/rating_skew[2],2)`) was outside the acceptable range. However as over 99% of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(imdb$imdb_rating, na.rm=TRUE),2)`, n=`r length(imdb$imdb_rating)-sum(is.na(imdb$imdb_rating))`).
+Imdb rating scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 4 and Figure 5) identified some issues with skewness and kurtosis. While the standardized score for kurtosis (`r assess_rating["pretty.skurt"]`) could be considered acceptable using the criteria proposed by Curran, West and Finch (1996), but the standardized score for skewness (`r assess_rating["pretty.sskew"]`) was outside the acceptable range. However as `r assess_rating["perc329"]`% (> 99%)of standardized scores fall within the bounds of +/- 3.29, using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r assess_rating["pretty.mean"]`, sd=`r assess_rating["pretty.sd"]`, n=`r assess_rating["n"]`).
 
 </p>
 
@@ -272,8 +271,7 @@ print(descr_rating)
 <b>Visualizations of imdb rating</b>
 
 ```{r fig.cap="<b>Figure 4: Histogram for imdb rating</b>", echo=FALSE, warning=FALSE}
-print(gs_rating)
-
+print(create_histogram(imdb, "imdb_rating", .2))
 ```
 
 ```{r, fig.cap="<b>Figure 5: QQPlot for imdb rating</b>", echo=FALSE, warning=FALSE}
@@ -306,6 +304,8 @@ corstat_metascore_rating<-stats::cor.test(imdb$metascore, imdb$imdb_rating, meth
 corstat_metascore_rating   
 ```
 
+### 2.1.5 Conclusion on Pearson’s correlation test on metascore and rating
+
 <p style="text-align:justify">
 
 The relationship between metascore and imdb rating was investigated using a Pearson correlation. A strong positive correlation was found (r =`r round(as.numeric(corstat_metascore_rating[4]),2)`, n=`r as.numeric(corstat_metascore_rating[2])`, p\<.001).
@@ -320,32 +320,21 @@ Ha: There is a relationship between a film’s votes and their imdb rating.\
 ### 2.2.1 Inspection of film's votes
 
 ```{r hist-votes, include=FALSE}
-#Create histogram
-gs_votes <- ggplot(imdb, aes(x=votes)) + labs(x="votes") + geom_histogram(binwidth=150000, colour="black", aes(y=..density.., fill=..count..)) + scale_fill_gradient("Count", low="#DCDCDC", high="#7C7C7C") + stat_function(fun=dnorm, color="red",args=list(mean=mean(imdb$votes, na.rm=TRUE), sd=sd(imdb$votes, na.rm=TRUE)))
-
 box_votes <- boxplot(imdb$votes, outline = F)
 
 descr_votes <- pastecs::stat.desc(imdb$votes, basic=F)
 ```
 
 ```{r stats-votes, include=FALSE}
-#Generate standardized scores for skewness and kurtosis
-votes_skew<-semTools::skew(imdb$votes)
-votes_kurt<-semTools::kurtosis(imdb$votes)
-votes_skew[1]/votes_skew[2]
-votes_kurt[1]/votes_kurt[2]
 
-#Calculate the percentage of standardized scores outside acceptable limits
-zvotes<- abs(scale(imdb$votes))
-
-perc196<-FSA::perc(as.numeric(zvotes), 1.96, "gt")
-# Below we are reporting the normality assessment - embedding code within a paragraph to get the statistics generated ( you can just write it out)
+assess_votes<-assess_normality(imdb$votes)
 
 ```
 
 <p style="text-align:justify">
 
-Film votes scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 7 and Figure 8) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r round(votes_kurt[1]/votes_kurt[2],2)`) nor for skewness (`r round(votes_skew[1]/votes_skew[2],2)`) could be considered within the acceptable range using the criteria proposed by Curran, West and Finch (1996). However, as over 95% of standardized scores fall within the bounds of +/- 1.96 (as perc over 1.96 `r perc196`% is above), using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r round(mean(imdb$votes, na.rm=TRUE),2)`, sd=`r round(sd(imdb$votes, na.rm=TRUE),2)`, n=`r length(imdb$votes)-sum(is.na(imdb$votes))`).
+Film votes scores were assessed for normality. Visual inspection of the histogram and QQ-Plot (see Figure 7 and Figure 8) identified some issues with skewness and kurtosis. Neither the standardized score for kurtosis (`r assess_votes["pretty.skurt"]`) nor for skewness (`r assess_votes["pretty.sskew"]`) could be considered within the acceptable range using the criteria proposed by Curran, West and Finch (1996). However, as `r assess_votes["perc196"]`%  (>95%) of standardized scores fall within the bounds of +/- 1.96, using the guidance of Field, Miles and Field (2012), the data can be considered to approximate a normal distribution (m=`r assess_votes["pretty.mean"]`, sd=`r assess_votes["pretty.sd"]`, n=`r assess_votes["n"]`).
+
 
 </p>
 
@@ -358,8 +347,7 @@ print(descr_rating)
 <b>Visualizations of votes</b>
 
 ```{r fig.cap="<b>Figure 7: Histogram for votes</b>", echo=FALSE, warning=FALSE}
-print(gs_votes)
-
+print(create_histogram(imdb, "votes", 150000))
 ```
 
 ```{r, fig.cap="<b>Figure 8: QQPlot for votes</b>", echo=FALSE, warning=FALSE}
@@ -376,7 +364,6 @@ The variable imdb rating has been assessed in 2.1.2
 ```{r corr-votes-imdb_rating, include=FALSE, warning=FALSE, echo=FALSE}
 
 #Create a Simple scatterplot of votes and imdb rating with a regression line
-
 scatter_votes_rating <- ggplot(imdb, aes(votes, imdb_rating)) + geom_point(alpha = .2) + geom_smooth(method = "lm", colour = "Red", se = F, formula = y ~ x) + labs(x = "votes", y = "imdb rating") 
 
 ```
@@ -395,6 +382,8 @@ As both film votes and imdb rating data can be considered approximately normal a
 corstat_votes_rating<-stats::cor.test(imdb$votes, imdb$imdb_rating, method='pearson')
 
 ```
+
+### 2.2.5 Conclusion on Pearson’s correlation test on votes and rating
 
 <p style="text-align:justify">
 
@@ -467,33 +456,21 @@ descr_ratings_by_group<-psych::describeBy(imdb$imdb_rating, imdb$genre_comedy, m
 
 #Generate standardized scores for skewness and kurtosis for comedy and non comedy ratings
 #
+
 comedies<- filter(imdb, genre_comedy==TRUE)
-
-comedy_skew<-semTools::skew(comedies$imdb_rating)
-comedy_kurt<-semTools::kurtosis(comedies$imdb_rating)
-comedy_skew[1]/comedy_skew[2]
-comedy_kurt[1]/comedy_kurt[2]
-
 non_comedies<- filter(imdb, genre_comedy==FALSE)
 
-non_comedy_skew<-semTools::skew(non_comedies$imdb_rating)
-non_comedy_kurt<-semTools::kurtosis(non_comedies$imdb_rating)
-non_comedy_skew[1]/non_comedy_skew[2]
-non_comedy_kurt[1]/non_comedy_kurt[2]
-
-zcomedy_rating<- abs(scale(comedies$imdb_rating))
-
-comedy_perc196<-FSA::perc(as.numeric(zcomedy_rating), 1.96, "gt")
-
-znon_comedy_rating<- abs(scale(non_comedies$imdb_rating))
-
-non_comedy_perc196<-FSA::perc(as.numeric(znon_comedy_rating), 1.96, "gt")
+assess_comedies<-assess_normality(comedies$imdb_rating)
+assess_non_comedies<-assess_normality(non_comedies$imdb_rating)
 
 ```
 
+
+
 <p style="text-align:justify">
 
-The two groups (comedy/non comedy) of imdb ratings were assessed for normality. Visual inspection of the histogram identified some issues with skewness and kurtosis. However, as over 95% of standardized scores fall within the bounds of +/- 1.96 (as percentages over were calculated `r comedy_perc196`% and `r non_comedy_perc196`%). Therefore, using the guidance of Field, Miles and Field (2012), both groups can be considered to approximate the normal distribution with the comedy group distribution attributes as (m=`r round(mean(comedies$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(comedies$imdb_rating)-sum(is.na(comedies$imdb_rating))`) and the non comedy group ones as (m=`r round(mean(non_comedies$imdb_rating, na.rm=TRUE),2)`, sd=`r round(sd(non_comedies$imdb_rating, na.rm=TRUE),2)`, n=`r length(non_comedies$imdb_rating)-sum(is.na(non_comedies$imdb_rating))`).
+The two groups (comedy/non comedy) of imdb ratings were assessed for normality. Visual inspection of the histogram identified some issues with skewness and kurtosis. However, as over 95% of standardized scores fall within the bounds of +/- 1.96 (as percentages were calculated to `r assess_comedies["perc196"]`% 
+and `r assess_non_comedies["perc196"]`%). Therefore, using the guidance of Field, Miles and Field (2012), both groups can be considered to approximate the normal distribution with the comedy group distribution attributes as (m=`r assess_comedies["pretty.mean"]`, sd=`r assess_comedies["pretty.sd"]`, n=`r assess_comedies["n"]`) and the non comedy group ones as (m=`r assess_non_comedies["pretty.mean"]`, sd=`r assess_non_comedies["pretty.sd"]`, n=`r assess_non_comedies["n"]`).
 
 </p>
 
@@ -540,6 +517,8 @@ print (levene_descr)
 
 ### 2.3.4 Two Sample t-test to compare ratings for films which are comedies and films which are not
 
+The Levene test for homogeneity of variance with a p-value=0.6629367 indicates the variances can be considered equal. Therefore we procced with a two sample t-test
+
 ```{r , include=FALSE, echo=FALSE}
 #Conduct the t-test from package stats
 #In this case we can use the var.equal = TRUE option to specify equal variances and a pooled variance estimate
@@ -577,7 +556,7 @@ Ha: There are differences between the imdb rating for films with different relea
 
 ### 2.4.1 Inspection of film's release decade
 
-No missing data was found for decades. The proportions of films ratings for each decade are shown in Figure 12.
+No missing data was found for decades. The proportions of films ratings for each decade are shown in Figure 13 and Figure 14.
 
 ```{r, include=FALSE, echo=FALSE}
 
@@ -596,7 +575,7 @@ colnames(count_data) <- c("decades", "Count")
 pie_decades <- ggplot(count_data, aes(x = "", y = Count, fill = decades)) + 
   geom_bar(stat = "identity", width = 1) +
   coord_polar("y", start = 0) +
-  geom_text(aes(label = Count), position = position_stack(vjust = 0.5)) +
+  geom_text(aes(label = Count), position = position_stack(vjust = 0.5, reverse = FALSE), size = 2) +
   theme_void() +
   theme(legend.title = element_blank(), 
         axis.text = element_blank(),
@@ -606,7 +585,7 @@ pie_decades <- ggplot(count_data, aes(x = "", y = Count, fill = decades)) +
 descr_ratings_by_decade<-psych::describeBy(imdb$imdb_rating, imdb$release_decade, mat=TRUE)
 ```
 
-```{r fig.cap="<b>Figure 12: Proportions of film ratings for each decade</b>" , echo=FALSE}
+```{r fig.cap="<b>Figure 13: Proportions of film ratings for each decade</b>" , echo=FALSE}
 print(pie_decades)
 ```
 
@@ -636,13 +615,15 @@ box_rating_by_decade
 
 ```
 
-```{r, include=T, echo=FALSE}
+```{r fig.cap="<b>Figure 14: Proportions of film ratings for each decade</b>" , echo=FALSE}
 
 print(box_rating_by_decade)
 
 ```
 
 ### 2.4.3 Bartlett test for homogeneity of variance
+
+A Bartlett's test for homogeneity of variance  has p-value < 2.2e-16 indicates that variances in groups are equal so to assume homogeneity 
 
 ```{r, include=FALSE, echo=FALSE}
 
@@ -655,6 +636,8 @@ print(descr_bartlett)
 ```
 
 ### 2.4.4 Anova omnibus test
+
+An one-way ANOVA can be performed as we have assumed homogeneity of variance
 
 ```{r, include=FALSE, echo=FALSE}
 #Conduct ANOVA using the one-way ANOVA from the stats package with VAR.equal to be true because we have homogeneity of variance
@@ -710,7 +693,7 @@ Ha: There is a relationship between a film’s genre (comedy/non comedy) and the
 
 ### 2.5.1 Inspection of release decade
 
-The variable release_decade has been assessed in 2.4.1. The proportion of films in each release decade is shown in Figure 12.
+The variable release_decade has been assessed in 2.4.1. The proportion of films in each release decade is shown in Figure 13 and Figure 14.
 
 ### 2.5.2 Inspection of genre (comedy/non comedy)
 
@@ -813,15 +796,12 @@ print(adjusted_residuals)
 
 ```
 
-
 However, to measure the association between film's comedy status and film's release decade we can Calculate cramer's V
 
 ```{r print-cramersv, include=TRUE, echo=FALSE}
 
 print(cramersv_decade_comedy)
 ```
-
-
 
 ### 2.5.5 Conclusion on examining the relation between film's genre (comedy/non comedy) and release decade
 
